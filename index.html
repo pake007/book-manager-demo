@@ -3,16 +3,25 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>个人图书管理系统</title>
+    <title>图书管理系统 - Supabase</title>
     <link rel="stylesheet" href="css/style.css">
+    <!-- 从 CDN 加载 Supabase -->
+    <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+    <!-- 在 config.js 之前加载环境变量 -->
+    <script src="env.js"></script>
+    <script src="config.js"></script>
 </head>
 <body>
     <div class="container">
         <header>
-            <h1>📚 我的个人图书管理系统</h1>
-            <p>数据保存在本地浏览器中，完全私密</p>
+            <h1>📚 个人图书管理系统</h1>
+            <p>基于 Supabase + GitHub Pages | 数据云端存储</p>
         </header>
 
+        <!-- 配置检查 -->
+        <div id="configCheck"></div>
+
+        <!-- 添加图书表单 -->
         <div class="book-form">
             <h2>添加新图书</h2>
             <form id="addBookForm">
@@ -23,61 +32,76 @@
                     <input type="text" id="bookAuthor" placeholder="作者">
                 </div>
                 <div class="form-group">
-                    <input type="number" id="bookYear" placeholder="出版年份" min="1000" max="2030">
+                    <textarea id="bookDescription" placeholder="图书描述" rows="3"></textarea>
                 </div>
                 <div class="form-group">
                     <select id="bookStatus">
-                        <option value="未读">未读</option>
-                        <option value="阅读中">阅读中</option>
-                        <option value="已读完">已读完</option>
+                        <option value="available">可借阅</option>
+                        <option value="borrowed">已借出</option>
+                        <option value="reserved">已预订</option>
                     </select>
-                </div>
-                <div class="form-group">
-                    <input type="number" id="bookRating" placeholder="评分（1-5）" min="1" max="5" step="0.1">
                 </div>
                 <button type="submit">添加图书</button>
             </form>
         </div>
 
+        <!-- 搜索和筛选 -->
         <div class="search-section">
             <input type="text" id="searchInput" placeholder="搜索书名或作者...">
             <select id="statusFilter">
                 <option value="">所有状态</option>
-                <option value="未读">未读</option>
-                <option value="阅读中">阅读中</option>
-                <option value="已读完">已读完</option>
+                <option value="available">可借阅</option>
+                <option value="borrowed">已借出</option>
+                <option value="reserved">已预订</option>
             </select>
         </div>
 
+        <!-- 统计信息 -->
         <div class="stats">
             <div class="stat-item">
                 <span class="stat-number" id="totalBooks">0</span>
                 <span class="stat-label">总藏书</span>
             </div>
             <div class="stat-item">
-                <span class="stat-number" id="readBooks">0</span>
-                <span class="stat-label">已读</span>
+                <span class="stat-number" id="availableBooks">0</span>
+                <span class="stat-label">可借阅</span>
             </div>
             <div class="stat-item">
-                <span class="stat-number" id="readingBooks">0</span>
-                <span class="stat-label">阅读中</span>
+                <span class="stat-number" id="borrowedBooks">0</span>
+                <span class="stat-label">已借出</span>
             </div>
         </div>
 
+        <!-- 图书列表 -->
         <div class="books-list">
             <h2>我的藏书 (<span id="booksCount">0</span>)</h2>
             <div id="booksContainer" class="books-container">
-                <!-- 图书列表将在这里动态生成 -->
+                <div class="loading">加载中...</div>
             </div>
-        </div>
-
-        <div class="actions">
-            <button onclick="exportData()" class="btn-secondary">导出数据</button>
-            <button onclick="importData()" class="btn-secondary">导入数据</button>
-            <button onclick="clearAllData()" class="btn-danger">清空所有数据</button>
         </div>
     </div>
 
+    <!-- 加载应用逻辑 -->
     <script src="js/app.js"></script>
+    
+    <script>
+        // 配置检查
+        document.addEventListener('DOMContentLoaded', function() {
+            const configCheck = document.getElementById('configCheck');
+            if (!CONFIG.supabase.url || !CONFIG.supabase.key) {
+                configCheck.innerHTML = `
+                    <div class="config-error">
+                        <h3>⚠️ 配置缺失</h3>
+                        <p>请设置 Supabase 环境变量：</p>
+                        <pre>window.env = {
+    SUPABASE_URL: '你的 Supabase URL',
+    SUPABASE_KEY: '你的 Supabase anon key'
+};</pre>
+                        <p>在部署到 GitHub Pages 时，可以通过 GitHub Actions 注入环境变量。</p>
+                    </div>
+                `;
+            }
+        });
+    </script>
 </body>
 </html>

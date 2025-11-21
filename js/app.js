@@ -1,129 +1,232 @@
+// app.js - 主应用逻辑
 class BookManager {
     constructor() {
-        this.books = this.loadBooks();
+        this.supabase = null;
+        this.isInitialized = false;
         this.init();
     }
 
-    init() {
-        this.renderBooks();
-        this.setupEventListeners();
-        this.updateStats();
+    async init() {
+        try {
+            // 初始化 Supabase
+            await this.initSupabase();
+            
+            // 设置事件监听
+            this.setupEventListeners();
+            
+            // 加载初始数据
+            await this.loadBooks();
+            
+            // 设置实时订阅
+            this.setupRealtimeSubscription();
+            
+        } catch (error) {
+            this.showError('初始化失败: ' + error.message);
+        }
     }
 
-    loadBooks() {
-        const books = localStorage.getItem('personalLibrary');
-        return books ? JSON.parse(books) : [];
-    }
+    async initSupabase() {
+        // 检查配置
+        if (!CONFIG.supabase.url || !CONFIG.supabase.key) {
+            throw new Error('Supabase 配置未设置');
+        }
 
-    saveBooks() {
-        localStorage.setItem('personalLibrary', JSON.stringify(this.books));
-        this.updateStats();
+        // 动态导入 Supabase
+        const { createClient } = window.supabase;
+        this.supabase = createClient(CONFIG.supabase.url, CONFIG.supabase.key);
+        
+        // 测试连接
+        const { data, error } = await this.supabase
+            .from('books')
+            .select('count')
+            .limit(1);
+
+        if (error) throw error;
+        
+        this.isInitialized = true;
+        console.log('Supabase 初始化成功');
     }
 
     setupEventListeners() {
         // 添加图书表单
-        document.getElementById('addBookForm').addEventListener('submit', (e) => {
-            e.preventDefault();
-            this.addBook();
-        });
+        const addBookForm = document.getElementById('addBookForm');
+        if (addBookForm) {
+            addBookForm.addEventListener('submit', (e) => {
+                e.preventDefault();
+                this.addBook();
+            });
+        }
 
-        // 搜索和筛选
-        document.getElementById('searchInput').addEventListener('input', () => {
-            this.renderBooks();
-        });
+        // 搜索功能
+        const searchInput = document.getElementById('searchInput');
+        if (searchInput) {
+            searchInput.addEventListener('input', () => {
+                this.renderBooks();
+            });
+        }
 
-        document.getElementById('statusFilter').addEventListener('change', () => {
-            this.renderBooks();
-        });
+        // 状态筛选
+        const statusFilter = document.getElementById('statusFilter');
+        if (statusFilter) {
+            statusFilter.addEventListener('change', () => {
+                this.renderBooks();
+            });
+        }
     }
 
-    addBook() {
-        const title = document.getElementById('bookTitle').value.trim();
-        const author = document.getElementById('bookAuthor').value.trim();
-        const year = document.getElementById('bookYear').value;
-        const status = document.getElementById('bookStatus').value;
-        const rating = document.getElementById('bookRating').value;
+    async loadBooks() {
+        if (!this.isInitialized) return;
 
-        if (!title) {
-            alert('请输入书名！');
+        this.showLoading();
+        
+        try {
+            let query = this.supabase
+                .from('books')
+                .select('*')
+                .order('created_at', { ascending: false });
+
+            const searchTerm = document.getElementById('searchInput')?.value.toLowerCase();
+            const statusFilter = document.getElementById('statusFilter')?.value;
+
+            if (searchTerm) {
+                query = query.or(`title.ilike.%${searchTerm}%,author.ilike.%${searchTerm}%`);
+            }
+
+            if (statusFilter) {
+                query = query.eq('status', statusFilter);
+            }
+
+            const { data: books, error } = await query;
+
+            if (error) throw error;
+            
+            this.books = books || [];
+            this.renderBooks();
+            this.updateStats();
+            
+        } catch (error) {
+            this.showError('加载图书失败: ' + error.message);
+        }
+    }
+
+    async addBook() {
+        if (!this.isInitialized) {
+            this.showError('系统未初始化完成');
             return;
         }
 
-        const book = {
-            id: Date.now().toString(),
-            title,
-            author: author || '未知作者',
-            year: year || '未知年份',
-            status: status || '未读',
-            rating: rating || '未评分',
-            addedDate: new Date().toLocaleDateString('zh-CN')
-        };
+        const title = document.getElementById('bookTitle')?.value.trim();
+        const author = document.getElementById('bookAuthor')?.value.trim();
+        const description = document.getElementById('bookDescription')?.value.trim();
+        const status = document.getElementById('bookStatus')?.value;
 
-        this.books.unshift(book);
-        this.saveBooks();
-        this.renderBooks();
-        this.resetForm();
+        if (!title) {
+            this.showError('请输入书名');
+            return;
+        }
+
+        const submitBtn = document.querySelector('#addBookForm button[type="submit"]');
+        const originalText = submitBtn.textContent;
         
-        alert(`《${title}》添加成功！`);
+        try {
+            submitBtn.disabled = true;
+            submitBtn.textContent = '添加中...';
+
+            const { data, error } = await this.supabase
+                .from('books')
+                .insert([
+                    {
+                        title: title,
+                        author: author || '未知作者',
+                        description: description,
+                        status: status || 'available'
+                    }
+                ])
+                .select();
+
+            if (error) throw error;
+
+            // 清空表单
+            document.getElementById('addBookForm').reset();
+
+            this.showSuccess(`《${title}》添加成功！`);
+
+            // 刷新图书列表
+            await this.loadBooks();
+            
+        } catch (error) {
+            this.showError('添加图书失败: ' + error.message);
+        } finally {
+            submitBtn.disabled = false;
+            submitBtn.textContent = originalText;
+        }
     }
 
-    resetForm() {
-        document.getElementById('addBookForm').reset();
+    async updateBook(id, updates) {
+        if (!this.isInitialized) return;
+
+        try {
+            const { error } = await this.supabase
+                .from('books')
+                .update({
+                    ...updates,
+                    updated_at: new Date().toISOString()
+                })
+                .eq('id', id);
+
+            if (error) throw error;
+
+        } catch (error) {
+            this.showError('更新图书失败: ' + error.message);
+        }
     }
 
-    editBook(id) {
+    async deleteBook(id) {
+        if (!this.isInitialized) return;
+
         const book = this.books.find(b => b.id === id);
         if (!book) return;
 
-        const newTitle = prompt('修改书名：', book.title);
-        if (newTitle === null) return;
+        if (!confirm(`确定要删除《${book.title}》吗？此操作不可撤销！`)) {
+            return;
+        }
 
-        const newAuthor = prompt('修改作者：', book.author);
-        const newYear = prompt('修改出版年份：', book.year);
-        const newStatus = prompt('修改阅读状态（未读/阅读中/已读完）：', book.status);
-        const newRating = prompt('修改评分（1-5）：', book.rating);
+        try {
+            const { error } = await this.supabase
+                .from('books')
+                .delete()
+                .eq('id', id);
 
-        if (newTitle) book.title = newTitle;
-        if (newAuthor !== null) book.author = newAuthor;
-        if (newYear !== null) book.year = newYear;
-        if (newStatus !== null) book.status = newStatus;
-        if (newRating !== null) book.rating = newRating;
+            if (error) throw error;
 
-        this.saveBooks();
-        this.renderBooks();
-    }
+            this.showSuccess('图书删除成功！');
 
-    deleteBook(id) {
-        if (!confirm('确定要删除这本书吗？')) return;
-
-        this.books = this.books.filter(book => book.id !== id);
-        this.saveBooks();
-        this.renderBooks();
-    }
-
-    getFilteredBooks() {
-        const searchTerm = document.getElementById('searchInput').value.toLowerCase();
-        const statusFilter = document.getElementById('statusFilter').value;
-
-        return this.books.filter(book => {
-            const matchesSearch = book.title.toLowerCase().includes(searchTerm) || 
-                                book.author.toLowerCase().includes(searchTerm);
-            const matchesStatus = !statusFilter || book.status === statusFilter;
-            return matchesSearch && matchesStatus;
-        });
+        } catch (error) {
+            this.showError('删除图书失败: ' + error.message);
+        }
     }
 
     renderBooks() {
         const container = document.getElementById('booksContainer');
+        if (!container) return;
+
         const filteredBooks = this.getFilteredBooks();
         
         document.getElementById('booksCount').textContent = filteredBooks.length;
 
         if (filteredBooks.length === 0) {
+            const searchTerm = document.getElementById('searchInput')?.value;
+            const statusFilter = document.getElementById('statusFilter')?.value;
+            
+            let message = '暂无图书，赶快添加第一本书吧！';
+            if (searchTerm || statusFilter) {
+                message = '没有找到符合条件的图书';
+            }
+            
             container.innerHTML = `
                 <div class="empty-state">
-                    <h3>📚 暂无图书</h3>
-                    <p>${this.books.length === 0 ? '赶快添加你的第一本书吧！' : '没有找到符合条件的图书'}</p>
+                    <h3>📚 ${message}</h3>
+                    ${searchTerm || statusFilter ? '<button onclick="bookManager.clearFilters()" style="margin-top: 10px;">清除筛选条件</button>' : ''}
                 </div>
             `;
             return;
@@ -133,104 +236,139 @@ class BookManager {
             <div class="book-card">
                 <div class="book-title">《${this.escapeHtml(book.title)}》</div>
                 <div class="book-author">作者：${this.escapeHtml(book.author)}</div>
-                <div class="book-year">出版年份：${this.escapeHtml(book.year)}</div>
-                <div class="book-rating">评分：${book.rating} ⭐</div>
-                <div class="book-status status-${this.getStatusClass(book.status)}">
-                    ${book.status}
+                ${book.description ? `<div class="book-description">${this.escapeHtml(book.description)}</div>` : ''}
+                <div class="book-status status-${book.status}">
+                    ${this.getStatusText(book.status)}
                 </div>
-                <div class="book-added">添加于：${book.addedDate}</div>
+                <div class="book-added">添加于：${new Date(book.created_at).toLocaleDateString('zh-CN')}</div>
                 <div class="book-actions">
-                    <button class="btn-edit" onclick="bookManager.editBook('${book.id}')">编辑</button>
-                    <button class="btn-delete" onclick="bookManager.deleteBook('${book.id}')">删除</button>
+                    <select onchange="bookManager.updateBookStatus(${book.id}, this.value)" class="status-select">
+                        <option value="available" ${book.status === 'available' ? 'selected' : ''}>可借阅</option>
+                        <option value="borrowed" ${book.status === 'borrowed' ? 'selected' : ''}>已借出</option>
+                        <option value="reserved" ${book.status === 'reserved' ? 'selected' : ''}>已预订</option>
+                    </select>
+                    <button class="btn-delete" onclick="bookManager.deleteBook(${book.id})">删除</button>
                 </div>
             </div>
         `).join('');
     }
 
+    getFilteredBooks() {
+        if (!this.books) return [];
+        
+        const searchTerm = document.getElementById('searchInput')?.value.toLowerCase();
+        const statusFilter = document.getElementById('statusFilter')?.value;
+
+        return this.books.filter(book => {
+            const matchesSearch = !searchTerm || 
+                book.title.toLowerCase().includes(searchTerm) || 
+                book.author.toLowerCase().includes(searchTerm);
+            const matchesStatus = !statusFilter || book.status === statusFilter;
+            return matchesSearch && matchesStatus;
+        });
+    }
+
+    async updateBookStatus(id, newStatus) {
+        await this.updateBook(id, { status: newStatus });
+    }
+
+    updateStats() {
+        if (!this.books) return;
+
+        const totalBooks = this.books.length;
+        const availableBooks = this.books.filter(book => book.status === 'available').length;
+        const borrowedBooks = this.books.filter(book => book.status === 'borrowed').length;
+
+        document.getElementById('totalBooks').textContent = totalBooks;
+        document.getElementById('availableBooks').textContent = availableBooks;
+        document.getElementById('borrowedBooks').textContent = borrowedBooks;
+    }
+
+    setupRealtimeSubscription() {
+        if (!this.isInitialized) return;
+
+        this.supabase
+            .channel('books-changes')
+            .on('postgres_changes', 
+                { 
+                    event: '*',
+                    schema: 'public', 
+                    table: 'books' 
+                }, 
+                () => {
+                    // 重新加载数据
+                    this.loadBooks();
+                }
+            )
+            .subscribe();
+    }
+
+    clearFilters() {
+        document.getElementById('searchInput').value = '';
+        document.getElementById('statusFilter').value = '';
+        this.renderBooks();
+    }
+
+    // 工具函数
+    showLoading() {
+        const container = document.getElementById('booksContainer');
+        if (container) {
+            container.innerHTML = '<div class="loading">加载中...</div>';
+        }
+    }
+
+    showError(message) {
+        this.showMessage(message, 'error');
+        console.error(message);
+    }
+
+    showSuccess(message) {
+        this.showMessage(message, 'success');
+    }
+
+    showMessage(message, type) {
+        // 移除现有消息
+        const existingMsg = document.querySelector('.error-message, .success-message');
+        if (existingMsg) {
+            existingMsg.remove();
+        }
+
+        const messageDiv = document.createElement('div');
+        messageDiv.className = type === 'error' ? 'error-message' : 'success-message';
+        messageDiv.textContent = message;
+
+        const container = document.querySelector('.container');
+        const bookForm = document.querySelector('.book-form');
+        container.insertBefore(messageDiv, bookForm.nextSibling);
+
+        // 自动隐藏成功消息
+        if (type === 'success') {
+            setTimeout(() => {
+                messageDiv.remove();
+            }, 3000);
+        }
+    }
+
+    getStatusText(status) {
+        const statusMap = {
+            'available': '可借阅',
+            'borrowed': '已借出', 
+            'reserved': '已预订'
+        };
+        return statusMap[status] || status;
+    }
+
     escapeHtml(text) {
+        if (!text) return '';
         const div = document.createElement('div');
         div.textContent = text;
         return div.innerHTML;
     }
-
-    getStatusClass(status) {
-        const statusMap = {
-            '未读': 'unread',
-            '阅读中': 'reading',
-            '已读完': 'finished'
-        };
-        return statusMap[status] || 'unread';
-    }
-
-    updateStats() {
-        const totalBooks = this.books.length;
-        const readBooks = this.books.filter(book => book.status === '已读完').length;
-        const readingBooks = this.books.filter(book => book.status === '阅读中').length;
-
-        document.getElementById('totalBooks').textContent = totalBooks;
-        document.getElementById('readBooks').textContent = readBooks;
-        document.getElementById('readingBooks').textContent = readingBooks;
-    }
-}
-
-// 工具函数
-function exportData() {
-    const books = bookManager.books;
-    if (books.length === 0) {
-        alert('没有数据可以导出！');
-        return;
-    }
-
-    const dataStr = JSON.stringify(books, null, 2);
-    const dataBlob = new Blob([dataStr], { type: 'application/json' });
-    
-    const link = document.createElement('a');
-    link.href = URL.createObjectURL(dataBlob);
-    link.download = '我的图书库备份.json';
-    link.click();
-}
-
-function importData() {
-    const input = document.createElement('input');
-    input.type = 'file';
-    input.accept = '.json';
-    
-    input.onchange = e => {
-        const file = e.target.files[0];
-        const reader = new FileReader();
-        
-        reader.onload = event => {
-            try {
-                const importedBooks = JSON.parse(event.target.result);
-                if (Array.isArray(importedBooks)) {
-                    if (confirm(`确定要导入 ${importedBooks.length} 本书吗？这将覆盖现有数据。`)) {
-                        bookManager.books = importedBooks;
-                        bookManager.saveBooks();
-                        bookManager.renderBooks();
-                        alert('数据导入成功！');
-                    }
-                } else {
-                    throw new Error('文件格式不正确');
-                }
-            } catch (error) {
-                alert('导入失败：文件格式不正确！');
-            }
-        };
-        
-        reader.readAsText(file);
-    };
-    
-    input.click();
-}
-
-function clearAllData() {
-    if (confirm('⚠️ 确定要清空所有数据吗？此操作不可恢复！')) {
-        bookManager.books = [];
-        bookManager.saveBooks();
-        bookManager.renderBooks();
-        alert('所有数据已清空！');
-    }
 }
 
 // 初始化应用
-const bookManager = new BookManager();
+let bookManager;
+
+document.addEventListener('DOMContentLoaded', function() {
+    bookManager = new BookManager();
+});
