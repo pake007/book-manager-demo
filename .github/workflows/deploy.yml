@@ -1,0 +1,43 @@
+name: Deploy Pages
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 生成 config.js（把变量烘焙进静态产物）
+      - name: Generate config.js
+        run: |
+          cat <<EOF > config.js
+          window.APP_CONFIG = {
+            SUPABASE_URL: "${{ vars.SUPABASE_URL }}",
+            SUPABASE_KEY: "${{ vars.SUPABASE_KEY }}"
+          };
+          EOF
+
+      # 如果你没有真正的“构建”，可以直接上传整个仓库（或指定目录）
+      - name: Upload artifact
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: .   # 或者 path: public / dist 之类
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
